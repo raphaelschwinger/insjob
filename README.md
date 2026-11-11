@@ -110,7 +110,10 @@ UV_CACHE_DIR = "/datahome/{user}/.cache/uv"
 [data]                              # for `job mount`
 episodicrl = "/datahome/{user}/episodicrl"
 [mounts]                            # extra job mounts; /datahome is always mounted read-only
-extra = ["/datahome/{user}/episodicrl/processed:/data/processed:rw"]
+extra = [
+  "/datahome/{user}/.cache/uv:/datahome/{user}/.cache/uv:rw",  # UV_CACHE_DIR must be writable
+  "/datahome/{user}/episodicrl/processed:/data/processed:rw",
+]
 ```
 
 ## Commands
