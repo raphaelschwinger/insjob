@@ -1,0 +1,293 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>insjob dashboard</title>
+<style>
+:root {
+  --bg: #f7f7f5; --panel: #ffffff; --ink: #1d1d1b; --muted: #6b6b66; --line: #e4e3de;
+  --free: #2f8f5b; --busy: #c4453c; --mine: #2f6fd1; --warn: #b7791f; --chip: #efeee9;
+  --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #151515; --panel: #1e1e1d; --ink: #ecebe6; --muted: #9b9a94; --line: #2f2f2d;
+    --free: #4cbf7f; --busy: #e2665c; --mine: #6b9cf0; --warn: #e0a645; --chip: #2a2a28;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink);
+  font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+header { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: baseline;
+  padding: 14px 16px; border-bottom: 1px solid var(--line); background: var(--panel); }
+header h1 { font-size: 16px; margin: 0; }
+header .meta { color: var(--muted); font-size: 13px; }
+main { padding: 16px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px;
+  max-width: 1400px; margin: 0 auto; }
+section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+  padding: 12px 14px; min-width: 0; }
+h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted);
+  margin: 0 0 10px; }
+.hosts { display: grid; gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr)); }
+.host { border: 1px solid var(--line); border-radius: 8px; padding: 10px; min-width: 0; }
+.host.disallowed { opacity: .55; }
+.host .hd { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+.host .hd b { font-size: 15px; }
+.host .sub { color: var(--muted); font-size: 12px; }
+.gpu { display: grid; grid-template-columns: 18px 1fr; gap: 6px; align-items: center;
+  padding: 5px 0; border-top: 1px dashed var(--line); }
+.gpu > div { min-width: 0; }
+.dot { width: 10px; height: 10px; border-radius: 50%; background: var(--free); }
+.dot.busy { background: var(--busy); } .dot.mine { background: var(--mine); }
+.dot.claim { background: var(--warn); }
+.bar { height: 5px; background: var(--chip); border-radius: 3px; overflow: hidden; margin-top: 3px; }
+.bar > i { display: block; height: 100%; background: var(--muted); }
+.owner { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; }
+.owner b { color: var(--mine); font-weight: 600; }
+.proc { display: flex; gap: 6px; align-items: baseline; font-size: 12px; min-width: 0;
+  color: var(--muted); }
+.proc .u { color: var(--ink); font-weight: 600; white-space: nowrap; }
+.proc .u.me { color: var(--mine); }
+.proc .pcmd { font-family: var(--mono); font-size: 11.5px; flex: 1; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: help; }
+#tip { position: fixed; z-index: 10; max-width: min(640px, calc(100vw - 32px));
+  padding: 8px 10px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel);
+  color: var(--ink); box-shadow: 0 4px 16px rgba(0, 0, 0, .18); font: 12px/1.45 var(--mono);
+  white-space: pre-wrap; word-break: break-all; pointer-events: none; display: none; }
+.grid2 { display: grid; gap: 16px; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); }
+@media (max-width: 900px) { .grid2 { grid-template-columns: minmax(0, 1fr); } }
+.tablewrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line);
+  white-space: nowrap; }
+th { color: var(--muted); font-weight: 500; font-size: 12px; }
+td.cmd { font-family: var(--mono); font-size: 12px; max-width: 360px; overflow: hidden;
+  text-overflow: ellipsis; cursor: help; }
+.st { padding: 1px 7px; border-radius: 10px; font-size: 12px; background: var(--chip); }
+.st.running { color: var(--free); } .st.failed { color: var(--busy); }
+.st.queued, .st.starting { color: var(--warn); }
+button { font: inherit; font-size: 12px; padding: 3px 9px; border-radius: 6px; cursor: pointer;
+  border: 1px solid var(--line); background: var(--chip); color: var(--ink); }
+button:hover { border-color: var(--muted); }
+a { color: var(--mine); }
+.events { list-style: none; margin: 0; padding: 0; max-height: 420px; overflow: auto; }
+.events li { padding: 6px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
+.events time { color: var(--muted); font-size: 12px; margin-right: 6px; }
+#log { position: fixed; inset: auto 0 0 0; height: 45vh; background: var(--panel);
+  border-top: 1px solid var(--line); display: none; flex-direction: column; z-index: 5; }
+#log.open { display: flex; }
+#log .bar2 { display: flex; justify-content: space-between; align-items: center;
+  padding: 8px 16px; border-bottom: 1px solid var(--line); }
+#log pre { flex: 1; margin: 0; padding: 10px 16px; overflow: auto; font: 12px/1.4 var(--mono);
+  white-space: pre-wrap; word-break: break-all; }
+.empty { color: var(--muted); font-size: 13px; padding: 6px 0; }
+#login { max-width: 420px; margin: 60px auto; }
+input { font: inherit; width: 100%; padding: 6px 8px; border-radius: 6px;
+  border: 1px solid var(--line); background: var(--bg); color: var(--ink); }
+</style>
+</head>
+<body>
+<header>
+  <h1>insjob</h1>
+  <span class="meta" id="me">connecting…</span>
+  <span class="meta" id="updated"></span>
+  <span style="flex:1"></span>
+  <button id="notif">enable notifications</button>
+</header>
+<div id="login" hidden>
+  <section><h2>token</h2>
+    <p class="empty">Open the dashboard with <code>job ui</code>, or paste the token from
+      <code>&lt;state&gt;/token</code>.</p>
+    <input id="tok" placeholder="token"><p><button id="save">open</button></p></section>
+</div>
+<main id="app" hidden>
+  <section><h2>GPUs in the lab</h2><div class="hosts" id="hosts"></div></section>
+  <div class="grid2">
+    <section><h2>my jobs</h2><div class="tablewrap"><table>
+      <thead><tr><th>id</th><th>state</th><th>kind</th><th>host · gpu</th><th>repo</th>
+        <th>command</th><th>time</th><th></th></tr></thead>
+      <tbody id="jobs"></tbody></table></div></section>
+    <section><h2>notifications</h2><ul class="events" id="events"></ul></section>
+  </div>
+  <section><h2>other people's insjob jobs</h2><div class="tablewrap"><table>
+    <thead><tr><th>host</th><th>user</th><th>job</th><th>kind</th><th>gpu</th><th>repo</th>
+      <th>command</th><th>running</th></tr></thead><tbody id="lab"></tbody></table></div></section>
+</main>
+<div id="tip"></div>
+<div id="log"><div class="bar2"><b id="logtitle">log</b>
+  <button id="closelog">close</button></div><pre id="logtext"></pre></div>
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  const store = {
+    get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+    set(k, v) { try { localStorage.setItem(k, v); } catch {} },
+  };
+  const hash = new URLSearchParams(location.hash.slice(1));
+  if (hash.get("token")) { store.set("insjob-token", hash.get("token")); history.replaceState(null, "", "/"); }
+  let token = store.get("insjob-token") || hash.get("token") || "";
+  let me = "", sinceTs = Date.now() / 1000 - 6 * 3600, firstEvents = true, stream = null;
+
+  const api = async (path, opts = {}) => {
+    const r = await fetch(path, { ...opts, headers: { Authorization: "Bearer " + token } });
+    if (r.status === 401) { showLogin(); throw new Error("auth"); }
+    return path.includes("/log") ? r.text() : r.json();
+  };
+  const ago = (ts) => {
+    if (!ts) return "";
+    let s = Math.max(0, Math.floor(Date.now() / 1000 - ts));
+    if (s >= 86400) return Math.floor(s / 86400) + "d";
+    if (s >= 3600) return Math.floor(s / 3600) + "h" + String(Math.floor(s % 3600 / 60)).padStart(2, "0");
+    if (s >= 60) return Math.floor(s / 60) + "m";
+    return s + "s";
+  };
+  // "/opt/venv/bin/python3 -u src/train.py x=1" -> "python3 -u src/train.py x=1"
+  const shortCmd = (c) => { c = String(c || ""); const i = c.indexOf(" ");
+    const exe = i < 0 ? c : c.slice(0, i); return exe.split("/").pop() + (i < 0 ? "" : c.slice(i)); };
+  function showLogin() { $("login").hidden = false; $("app").hidden = true; }
+
+  function renderHosts(hosts) {
+    $("hosts").innerHTML = hosts.map((h) => {
+      if (!h.online) return `<div class="host ${h.allowed ? "" : "disallowed"}"><div class="hd">
+        <b>${esc(h.host)}</b><span class="sub">${esc(h.gpus_desc)}</span></div>
+        <div class="empty">no data — nobody runs an agent here yet</div></div>`;
+      const gpus = (h.gpus || []).map((g) => {
+        const seen = new Set(), procs = [];
+        (g.procs || []).forEach((p) => {
+          const user = p.insjob_user || p.user || "?";
+          const tag = p.insjob_id ? "job " + p.insjob_id : "";
+          const key = user + "|" + tag + "|" + (p.cmd || "");
+          if (seen.has(key)) return;
+          seen.add(key);
+          procs.push({ user, tag, cmd: p.cmd || p.container_name || "", pid: p.pid, mem: p.mem_mb });
+        });
+        if (g.claim && !procs.length) procs.push({ user: g.claim.user, tag: "job " + g.claim.job, cmd: "(starting)" });
+        const mine = procs.some((p) => p.user === me);
+        const busy = procs.length || g.mem_used_mb > 1024 || g.util > 5;
+        const cls = mine ? "mine" : g.claim && !(g.procs || []).length ? "claim" : busy ? "busy" : "";
+        const who = procs.map((p) => {
+          const full = p.cmd + (p.pid ? `\n\npid ${p.pid}` + (p.mem ? ` · ${(p.mem / 1024).toFixed(1)} GB` : "") : "");
+          return `<div class="proc"><span class="u ${p.user === me ? "me" : ""}">${esc(p.user)}</span>`
+            + (p.tag ? `<span>${esc(p.tag)}</span>` : "")
+            + `<span class="pcmd" data-full="${esc(full)}">${esc(shortCmd(p.cmd))}</span></div>`;
+        }).join("") || `<div class="owner">${busy ? "busy (untracked)" : "free"}</div>`;
+        const pct = Math.round(100 * g.mem_used_mb / g.mem_total_mb);
+        return `<div class="gpu"><span class="dot ${cls}"></span><div>
+          <div style="display:flex;justify-content:space-between;gap:8px"><span>${g.index} · ${esc(g.name)}</span>
+          <span class="sub">${(g.mem_used_mb / 1024).toFixed(1)}/${(g.mem_total_mb / 1024).toFixed(0)}G · ${g.util}%${g.temp != null ? " · " + g.temp + "°" : ""}</span></div>
+          <div class="bar"><i style="width:${pct}%"></i></div>${who}</div></div>`;
+      }).join("");
+      return `<div class="host ${h.allowed ? "" : "disallowed"}"><div class="hd"><b>${esc(h.host)}</b>
+        <span class="sub">load ${Number(h.load1 || 0).toFixed(0)}/${h.cpus} · ${Math.round((h.mem_avail_mb || 0) / 1024)}G RAM free${h.allowed ? "" : " · not in your policy"}</span></div>${gpus}</div>`;
+    }).join("");
+  }
+
+  function renderJobs(jobs) {
+    const rows = jobs.slice(0, 60).map((j) => {
+      const dur = j.started_at ? fmtDur((j.ended_at || Date.now() / 1000) - j.started_at) : "queued " + ago(j.submitted_at);
+      const active = ["queued", "starting", "running"].includes(j.state);
+      const links = [
+        `<button data-log="${j.id}">log</button>`,
+        active ? `<button data-stop="${j.id}">${j.state === "queued" ? "cancel" : "stop"}</button>` : "",
+        j.wandb_url ? `<a href="${esc(j.wandb_url)}" target="_blank" rel="noopener">W&amp;B</a>` : "",
+      ].join(" ");
+      const where = (j.host || (j.hosts || []).join(",")) + ((j.gpu_ids || []).length ? " · " + j.gpu_ids.join(",") : j.gpus ? " · " + j.gpus + "×" : " · cpu");
+      return `<tr><td>${j.id}</td><td><span class="st ${esc(j.state)}">${esc(j.state)}</span></td>
+        <td>${esc(j.kind || "run")}</td><td>${esc(where)}</td><td>${esc(j.repo)} <span class="sub">${esc((j.sha || "").slice(0, 7))}</span></td>
+        <td class="cmd" data-full="${esc((j.cmd || []).join(" "))}">${esc((j.cmd || []).join(" "))}</td><td>${dur}</td><td>${links}</td></tr>`;
+    });
+    $("jobs").innerHTML = rows.join("") || `<tr><td colspan="8" class="empty">no jobs yet — <code>job run -- …</code></td></tr>`;
+  }
+  const fmtDur = (s) => { s = Math.floor(s); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60);
+    return h ? `${h}h${String(m).padStart(2, "0")}` : `${m}m${String(s % 60).padStart(2, "0")}`; };
+
+  function renderLab(lab) {
+    const rows = [];
+    lab.filter((u) => u.user !== me).forEach((u) => (u.jobs || []).forEach((j) => rows.push(
+      `<tr><td>${esc(u.host)}</td><td>${esc(u.user)}</td><td>${j.id}</td><td>${esc(j.kind)}</td>
+      <td>${esc((j.gpu_ids || []).join(",") || "-")}</td><td>${esc(j.repo)}</td>
+      <td class="cmd" data-full="${esc(j.cmd)}">${esc(j.cmd)}</td><td>${ago(j.started_at)}</td></tr>`)));
+    $("lab").innerHTML = rows.join("") || `<tr><td colspan="8" class="empty">nobody else is running insjob jobs right now</td></tr>`;
+  }
+
+  async function refresh() {
+    try {
+      const d = await api("/api/overview");
+      me = d.me.user;
+      $("login").hidden = true; $("app").hidden = false;
+      $("me").textContent = `${d.me.user} (uid ${d.me.uid}) · ${d.policy.group}: ${d.policy.hosts.join(", ")} · ≤${d.policy.max_gpus_per_host} GPU/host · via ${d.served_by}`;
+      if (!document.querySelector("[data-full]:hover") && !tipPinned) {  // don't yank it away
+        renderHosts(d.hosts); renderJobs(d.jobs); renderLab(d.lab);
+        $("updated").textContent = "updated " + new Date().toLocaleTimeString();
+      } else $("updated").textContent = "paused while a command is shown";
+    } catch (e) { if (e.message !== "auth") $("updated").textContent = "connection lost — retrying"; }
+  }
+
+  async function pollEvents() {
+    try {
+      const evs = await api("/api/events?since=" + sinceTs);
+      if (evs.length) sinceTs = evs[evs.length - 1].ts;
+      const ul = $("events");
+      evs.forEach((e) => {
+        const icon = { succeeded: "✅", failed: "❌", cancelled: "⏹", skipped: "⏭", running: "▶️", queued: "🕒", starting: "⚙️", requeued: "↩️" }[e.kind] || "•";
+        const li = document.createElement("li");
+        li.innerHTML = `<time>${new Date(e.ts * 1000).toLocaleString()}</time>${icon} job ${e.job} <b>${esc(e.kind)}</b> ${esc(e.repo || "")}${e.host ? " on " + esc(e.host) : ""}${e.msg ? `<div class="sub">${esc(e.msg)}</div>` : ""}`;
+        ul.prepend(li);
+        if (!firstEvents && ["succeeded", "failed"].includes(e.kind) && "Notification" in window && Notification.permission === "granted") {
+          new Notification(`${icon} job ${e.job} ${e.kind}`, { body: `${e.repo || ""} on ${e.host || ""}${e.msg ? "\n" + e.msg : ""}` });
+        }
+      });
+      firstEvents = false;
+      if (!ul.children.length) ul.innerHTML = `<li class="empty">nothing yet</li>`;
+    } catch {}
+  }
+
+  function openLog(id) {
+    $("log").classList.add("open"); $("logtitle").textContent = "job " + id; $("logtext").textContent = "";
+    if (stream) stream.close();
+    stream = new EventSource(`/api/jobs/${id}/stream?token=${encodeURIComponent(token)}`);
+    stream.onmessage = (m) => { const pre = $("logtext"); const atEnd = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 20;
+      pre.textContent += m.data + "\n"; if (atEnd) pre.scrollTop = pre.scrollHeight; };
+  }
+  document.addEventListener("click", async (ev) => {
+    const t = ev.target;
+    if (t.dataset.log) openLog(t.dataset.log);
+    if (t.dataset.stop) { t.disabled = true; await api(`/api/jobs/${t.dataset.stop}/stop`, { method: "POST" }); refresh(); }
+  });
+  $("closelog").onclick = () => { $("log").classList.remove("open"); if (stream) stream.close(); };
+  $("save").onclick = () => { token = $("tok").value.trim(); store.set("insjob-token", token); refresh(); };
+  const nb = $("notif");
+  if (!("Notification" in window) || Notification.permission === "granted") nb.hidden = true;
+  nb.onclick = async () => { if (await Notification.requestPermission() === "granted") nb.hidden = true; };
+
+  if (!token) showLogin();
+  const tip = $("tip");
+  let tipPinned = false;
+  function showTip(el) {
+    tip.textContent = el.dataset.full; tip.style.display = "block";
+    const r = el.getBoundingClientRect(), t = tip.getBoundingClientRect();
+    const x = Math.max(16, Math.min(r.left, innerWidth - t.width - 16));
+    const y = r.bottom + 6 + t.height < innerHeight ? r.bottom + 6 : Math.max(8, r.top - t.height - 6);
+    tip.style.left = x + "px"; tip.style.top = y + "px";
+  }
+  const hideTip = () => { tip.style.display = "none"; tipPinned = false; };
+  document.addEventListener("mouseover", (ev) => {
+    const el = ev.target.closest("[data-full]");
+    if (el) showTip(el); else if (!tipPinned) tip.style.display = "none";
+  });
+  document.addEventListener("click", (ev) => {  // touch screens: tap a command to show it
+    const el = ev.target.closest("[data-full]");
+    if (el) { tipPinned = true; showTip(el); } else if (tipPinned) hideTip();
+  });
+  addEventListener("scroll", () => { if (!tipPinned) tip.style.display = "none"; }, true);
+  refresh(); pollEvents();
+  setInterval(refresh, 5000); setInterval(pollEvents, 5000);
+})();
+</script>
+</body>
+</html>
