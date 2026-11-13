@@ -216,6 +216,11 @@ EXTRA=""
 if [ -d /data-project ]; then
   EXTRA="--mount type=bind,src=/data-project,dst=/data-project,readonly,bind-propagation=rslave"
 fi
+# local filesystems, read-only and non-recursive, so the agent can report their usage
+for m in $(findmnt -rn -o TARGET,SOURCE -t ext2,ext3,ext4,xfs,btrfs,zfs,f2fs 2>/dev/null \\
+           | awk '$2 !~ /\\[/ && $1 !~ /^\\/(boot|snap|var\\/lib\\/(docker|containers))(\\/|$)/ {{print $1}}'); do
+  EXTRA="$EXTRA --mount type=bind,src=$m,dst=/hostfs/$(printf %s "$m" | tr / _),readonly,bind-recursive=disabled"
+done
 GPUS=""
 if command -v nvidia-smi >/dev/null 2>&1; then GPUS="--gpus all"; fi
 docker rm -f {i.agent_name} >/dev/null 2>&1 || true

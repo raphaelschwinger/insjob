@@ -84,6 +84,20 @@ a { color: var(--mine); }
 #log pre { flex: 1; margin: 0; padding: 10px 16px; overflow: auto; font: 12px/1.4 var(--mono);
   white-space: pre-wrap; word-break: break-all; }
 .empty { color: var(--muted); font-size: 13px; padding: 6px 0; }
+.shares { display: grid; gap: 12px; margin-bottom: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr)); }
+.share { border: 1px solid var(--line); border-radius: 8px; padding: 10px; min-width: 0; }
+.share .hd, .mnt .hd { display: flex; justify-content: space-between; gap: 8px; }
+.share .hd b { font-size: 15px; font-family: var(--mono); }
+.disk { padding: 6px 0; border-top: 1px dashed var(--line); min-width: 0; }
+.disk .dn { display: flex; justify-content: space-between; gap: 8px; }
+.disk .dn span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.disk .dn > span:last-child { flex: none; white-space: nowrap; }
+.mnt { margin: 4px 0 0 10px; font-size: 12px; }
+.mnt code { font-family: var(--mono); color: var(--ink); }
+.bar.lg { height: 7px; }
+.bar > i.ok { background: var(--free); } .bar > i.hi { background: var(--warn); }
+.bar > i.full { background: var(--busy); }
 #login { max-width: 420px; margin: 60px auto; }
 input { font: inherit; width: 100%; padding: 6px 8px; border-radius: 6px;
   border: 1px solid var(--line); background: var(--bg); color: var(--ink); }
@@ -105,6 +119,8 @@ input { font: inherit; width: 100%; padding: 6px 8px; border-radius: 6px;
 </div>
 <main id="app" hidden>
   <section><h2>GPUs in the lab</h2><div class="hosts" id="hosts"></div></section>
+  <section><h2>storage</h2><div class="shares" id="shares"></div>
+    <div class="hosts" id="disks"></div></section>
   <div class="grid2">
     <section><h2>my jobs</h2><div class="tablewrap"><table>
       <thead><tr><th>id</th><th>state</th><th>kind</th><th>host · gpu</th><th>repo</th>
@@ -215,6 +231,39 @@ input { font: inherit; width: 100%; padding: 6px 8px; border-radius: 6px;
     $("lab").innerHTML = rows.join("") || `<tr><td colspan="8" class="empty">nobody else is running insjob jobs right now</td></tr>`;
   }
 
+  const fmtB = (b) => { const u = ["B", "K", "M", "G", "T", "P"]; let i = 0; b = Number(b || 0);
+    while (b >= 1024 && i < u.length - 1) { b /= 1024; i++; }
+    return (b >= 100 || i === 0 ? b.toFixed(0) : b.toFixed(1)) + u[i]; };
+  const usageBar = (u, lg) => {
+    const pct = Math.round(100 * u.used_b / u.size_b);
+    const cls = pct >= 90 ? "full" : pct >= 80 ? "hi" : "ok";
+    return `<div class="bar ${lg ? "lg" : ""}"><i class="${cls}" style="width:${pct}%"></i></div>`;
+  };
+  const usageText = (u) => `${fmtB(u.avail_b)} free · ${fmtB(u.used_b)}/${fmtB(u.size_b)} · ${Math.round(100 * u.used_b / u.size_b)}%`;
+
+  function renderStorage(network, hosts) {
+    $("shares").innerHTML = network.map((n) => `<div class="share"><div class="hd"><b>${esc(n.mount)}</b>
+      <span class="sub">${esc(n.source)} · ${esc(n.fstype)}</span></div>
+      ${usageBar(n, true)}<div class="sub" style="margin-top:4px">${usageText(n)}
+      <span title="measured on ${esc(n.via)} ${ago(n.updated)} ago"> · shared by all servers</span></div></div>`).join("")
+      || `<div class="empty">no reading of /datahome or /home yet (agents need <code>job agent upgrade</code>)</div>`;
+    $("disks").innerHTML = hosts.map((h) => {
+      const st = h.storage;
+      if (!st) return `<div class="host ${h.allowed ? "" : "disallowed"}"><div class="hd"><b>${esc(h.host)}</b></div>
+        <div class="empty">${h.online ? "no disk data — the agent here is older (<code>job agent upgrade</code>)" : "no data"}</div></div>`;
+      const disks = (st.disks || []).filter((d) => !d.virtual).map((d) => {
+        const mnts = (d.mounts || []).map((m) => m.size_b
+          ? `<div class="mnt"><div class="hd"><code>${esc(m.target)}</code><span class="sub">${usageText(m)}</span></div>${usageBar(m)}</div>`
+          : `<div class="mnt"><div class="hd"><code>${esc(m.target)}</code><span class="sub">${m.part_size_b ? fmtB(m.part_size_b) + " · " : ""}usage not visible to the agent</span></div></div>`
+        ).join("") || `<div class="mnt sub">not mounted</div>`;
+        return `<div class="disk"><div class="dn"><span>${esc(d.name)}${d.model ? ` <span class="sub">${esc(d.model)}</span>` : ""}</span>
+          <span class="sub">${esc(d.kind)}${d.size_b ? " · " + fmtB(d.size_b) : ""}</span></div>${mnts}</div>`;
+      }).join("");
+      return `<div class="host ${h.allowed ? "" : "disallowed"}"><div class="hd"><b>${esc(h.host)}</b>
+        <span class="sub">${(st.disks || []).filter((d) => !d.virtual && d.size_b).length} disks · ${ago(st.updated)} ago</span></div>${disks}</div>`;
+    }).join("");
+  }
+
   async function refresh() {
     try {
       const d = await api("/api/overview");
@@ -222,7 +271,7 @@ input { font: inherit; width: 100%; padding: 6px 8px; border-radius: 6px;
       $("login").hidden = true; $("app").hidden = false;
       $("me").textContent = `${d.me.user} (uid ${d.me.uid}) · ${d.policy.group}: ${d.policy.hosts.join(", ")} · ≤${d.policy.max_gpus_per_host} GPU/host · via ${d.served_by}`;
       if (!document.querySelector("[data-full]:hover") && !tipPinned) {  // don't yank it away
-        renderHosts(d.hosts); renderJobs(d.jobs); renderLab(d.lab);
+        renderHosts(d.hosts); renderStorage(d.network || [], d.hosts); renderJobs(d.jobs); renderLab(d.lab);
         $("updated").textContent = "updated " + new Date().toLocaleTimeString();
       } else $("updated").textContent = "paused while a command is shown";
     } catch (e) { if (e.message !== "auth") $("updated").textContent = "connection lost — retrying"; }

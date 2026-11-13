@@ -556,3 +556,93 @@ def test_short_cmd():
     assert short_cmd("/opt/venv/bin/python3 -u src/train.py x=1") == "python3 -u src/train.py x=1"
     assert short_cmd("nvtop") == "nvtop"
     assert short_cmd(None) == ""
+
+
+# ---- storage --------------------------------------------------------------------------
+MOUNTINFO = """\
+25 31 0:23 / /sys rw - sysfs sysfs rw
+31 1 259:4 / / rw,relatime shared:1 - ext4 /dev/nvme1n1p4 rw
+32 31 259:3 / /tmp rw - ext4 /dev/nvme1n1p3 rw
+33 31 8:1 / /data1 rw - ext4 /dev/sda1 rw
+34 31 8:1 /alice /home/alice/link rw - ext4 /dev/sda1 rw
+35 31 259:1 / /boot/efi rw - vfat /dev/nvme1n1p1 rw
+36 31 259:4 /var/lib/docker /var/lib/docker rw - ext4 /dev/nvme1n1p4 rw
+37 31 0:58 / /datahome rw - nfs4 10.0.0.10:/data2 rw
+38 31 252:0 / /my\\040disk rw - ext4 /dev/mapper/vg-lv rw
+"""
+
+
+def test_mountinfo_and_local_mounts():
+    from insjob.agent import storage
+    ms = storage.parse_mountinfo(MOUNTINFO)
+    assert ms[-1]["target"] == "/my disk"
+    local = storage.local_mounts(ms)
+    assert [m["target"] for m in local] == ["/", "/data1", "/my disk", "/tmp"]  # binds folded
+    assert storage.hostfs_path("/") == "/hostfs/_"
+    assert storage.hostfs_path("/data1") == "/hostfs/_data1"
+
+
+def fake_sysfs(root):
+    """nvme1n1 (p3, p4), sda (sda1, HDD), dm-0 on nvme1n1p4 + sda1, hidden nvme0c0n1, loop0."""
+    def mk(path, text):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+    devs = root / "devices"
+    for disk, parts, rota in (("nvme1n1", ["nvme1n1p3", "nvme1n1p4"], "0"), ("sda", ["sda1"], "1")):
+        d = devs / disk
+        mk(d / "size", "2000000000\n")
+        mk(d / "queue" / "rotational", rota)
+        mk(d / "device" / "model", "MODEL " + disk + "   \n")
+        for p in parts:
+            mk(d / p / "partition", "1")
+            mk(d / p / "size", "1000000000")
+    mk(devs / "dm-0" / "size", "100")
+    (devs / "dm-0" / "slaves").mkdir()
+    (devs / "dm-0" / "slaves" / "nvme1n1p4").symlink_to(devs / "nvme1n1" / "nvme1n1p4")
+    mk(devs / "nvme0c0n1" / "size", "100")
+    mk(devs / "nvme0c0n1" / "hidden", "1")
+    (devs / "nvme0c0n1" / "device").mkdir()
+    mk(devs / "loop0" / "size", "100")
+    (devs / "loop0" / "device").mkdir()
+    for sub in ("block", "class/block", "dev/block"):
+        (root / sub).mkdir(parents=True)
+    for disk in ("nvme1n1", "sda", "dm-0", "nvme0c0n1", "loop0"):
+        (root / "block" / disk).symlink_to(devs / disk)
+        (root / "class" / "block" / disk).symlink_to(devs / disk)
+    for p, disk in (("nvme1n1p3", "nvme1n1"), ("nvme1n1p4", "nvme1n1"), ("sda1", "sda")):
+        (root / "class" / "block" / p).symlink_to(devs / disk / p)
+    for mm, target in (("259:3", devs / "nvme1n1" / "nvme1n1p3"),
+                       ("259:4", devs / "nvme1n1" / "nvme1n1p4"),
+                       ("8:1", devs / "sda" / "sda1"), ("252:0", devs / "dm-0")):
+        (root / "dev" / "block" / mm).symlink_to(target)
+
+
+def test_block_devices_and_disks(tmp_path):
+    from insjob.agent import storage
+    sysfs = tmp_path / "sys"
+    fake_sysfs(sysfs)
+    (tmp_path / "proc" / "1").mkdir(parents=True)
+    (tmp_path / "proc" / "1" / "mountinfo").write_text(MOUNTINFO)
+    bd = storage.BlockDevices(str(sysfs))
+    disks = bd.disks()
+    assert [d["name"] for d in disks] == ["nvme1n1", "sda"]  # loop, hidden, dm skipped
+    assert disks[0]["kind"] == "NVMe" and disks[1]["kind"] == "HDD"
+    assert disks[0]["model"] == "MODEL nvme1n1" and disks[0]["size_b"] == 2000000000 * 512
+    assert bd.disks_of("dm-0") == ["nvme1n1"]
+    out = storage.read_disks(str(tmp_path / "proc"), str(sysfs), str(tmp_path / "hostfs"))
+    mounts = {d["name"]: [m["target"] for m in d["mounts"]] for d in out}
+    assert mounts == {"nvme1n1": ["/", "/my disk", "/tmp"], "sda": ["/data1"]}
+    assert out[1]["mounts"][0]["part_size_b"] == 1000000000 * 512
+    assert "size_b" not in out[1]["mounts"][0]  # not visible here -> no usage, no crash
+
+
+def test_network_storage_picks_freshest():
+    from insjob.agent.views import network_storage
+    hosts = [
+        {"host": "a", "storage": {"updated": 10, "network": [{"mount": "/home", "size_b": 1}]}},
+        {"host": "b", "storage": {"updated": 20, "network": [{"mount": "/home", "size_b": 2},
+                                                             {"mount": "/datahome", "size_b": 3}]}},
+        {"host": "c"},
+    ]
+    out = network_storage(hosts)
+    assert [(n["mount"], n["via"]) for n in out] == [("/datahome", "b"), ("/home", "b")]

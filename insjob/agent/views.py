@@ -29,10 +29,11 @@ def overview(state: State, lab_status: LabStatus, ident: Identity, policy: dict,
                 g["claim"] = claim
             entry.update({k: info.get(k) for k in
                           ("cpus", "load1", "cpus_free", "mem_total_mb", "mem_avail_mb",
-                           "updated")})
+                           "updated", "storage")})
             entry["gpus"] = gpus
         hosts.append(entry)
     return {
+        "network": network_storage(hosts),
         "me": {"user": ident.user, "uid": ident.uid, "group": policy["group"]},
         "policy": policy,
         "now": time.time(),
@@ -40,3 +41,15 @@ def overview(state: State, lab_status: LabStatus, ident: Identity, policy: dict,
         "lab": sorted(lab_data["users"], key=lambda u: (u["host"], u["user"])),
         "jobs": state.list_jobs(limit),
     }
+
+
+def network_storage(hosts: list[dict]) -> list[dict]:
+    """The shared drives (/datahome, /home) are the same on every server: freshest reading."""
+    best: dict[str, dict] = {}
+    for h in hosts:
+        st = h.get("storage") or {}
+        for n in st.get("network", []):
+            cur = best.get(n["mount"])
+            if cur is None or st.get("updated", 0) > cur["updated"]:
+                best[n["mount"]] = {**n, "updated": st.get("updated", 0), "via": h["host"]}
+    return [best[k] for k in sorted(best)]

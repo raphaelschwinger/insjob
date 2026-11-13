@@ -12,7 +12,7 @@ from ..identity import Identity
 from ..locks import GpuLocks, LabStatus
 from ..policy import reservation, size_gb, user_policy
 from ..state import State
-from . import docker_ops, gpu, notify
+from . import docker_ops, gpu, notify, storage
 
 WANDB_RE = re.compile(r"https://wandb\.ai/\S+/runs/[A-Za-z0-9]+")
 INTERACTIVE = {"exec", "shell"}
@@ -50,7 +50,7 @@ class Agent:
     def __init__(self, ident: Identity, host: str, lab: dict, *, state: State | None = None,
                  locks: GpuLocks | None = None, lab_status: LabStatus | None = None,
                  docker=docker_ops, read_gpus=gpu.read_gpus, read_host=gpu.read_host,
-                 interval: float = 10):
+                 storage_monitor: storage.StorageMonitor | None = None, interval: float = 10):
         self.ident = ident
         self.host = host
         self.lab = lab
@@ -64,6 +64,8 @@ class Agent:
         self.read_gpus = read_gpus
         self.read_host = read_host
         self.interval = interval
+        self.storage = storage_monitor or storage.StorageMonitor(
+            lambda: storage.read_storage(ident.home, ident.state_root))
         self.launching: dict[int, threading.Thread] = {}
         self.last_gpus: list[gpu.GpuInfo] = []
         self.last_host: dict = {}
@@ -76,6 +78,7 @@ class Agent:
     # ---- main loop ---------------------------------------------------------------
     def run_forever(self) -> None:
         self.log(f"started for {self.ident.user} (uid {self.ident.uid}), policy {self.policy}")
+        self.storage.start()
         while True:
             t0 = time.time()
             try:
@@ -271,5 +274,7 @@ class Agent:
             gd.append(d)
         claims = {str(k): v for k, v in self.locks.claims().items()}
         info = {"by": self.ident.user, "gpus": gd, "claims": claims, **host_info}
+        if self.storage.latest():
+            info["storage"] = self.storage.latest()
         self.lab_status.publish_gpus(self.host, info)
         self.state.write_host(self.host, info)
