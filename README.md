@@ -138,6 +138,20 @@ In jobs:
 - Logs are kept in `runs/<id>/log`.
 - A W&B run URL in the log is picked up and shown.
 
+## From a devcontainer on a server
+
+`job` also works inside a container on one of the servers, e.g. an always-on control
+container on stohl (raphaelschwinger/phd's `.devcontainer/server`):
+
+- **SSH**: the container needs a key that can log into the servers, in a **writable**
+  `~/.ssh`, because the ControlMaster sockets live there. Copy a read-only mount of the host
+  `~/.ssh` into it rather than mounting `~/.ssh` read-only. On a server, your own key works
+  once it is in `~/.ssh/authorized_keys`, and home is shared by all servers.
+- **Config**: mount the host's `~/.config/insjob`, or run `job setup -y --no-install` in the
+  container.
+- **Jobs**: the agents run on the servers, so jobs keep running whatever happens to the
+  container.
+
 ## Notifications
 
 The dashboard shows browser notifications while it is open. For pushes to your phone,
